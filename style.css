@@ -1,0 +1,9 @@
+body {
+  background: #00ddff;
+  border: 10px solid #0fff00;
+  border-width: 100px;
+  pointer-events: none;
+  box-sizing: border-box;
+  z-index: 9999;
+  height: 1000px;
+}
