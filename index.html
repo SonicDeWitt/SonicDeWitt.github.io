@@ -3,19 +3,25 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Welcome to Brayden's Cookie Empire</title>
+  <title>Brayden's Cookie Empire</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <h1>🍪 Brayden's Cookie Empire 🍪</h1>
-  <p>Click below to start your cookie journey!</p>
-  <button id="start-game">Start Game</button>
+  <div class="menu">
+    <h1 class="title">🍪 Brayden's Cookie Empire 🍪</h1>
+    <img class="menu-cookie" src="https://upload.wikimedia.org/wikipedia/commons/6/69/Chocolate_Chip_Cookie.png" alt="cookie">
+    <p>Welcome to your cookie empire!</p>
+    <button id="start-game">Start Game</button>
+  </div>
 
   <script>
     document.getElementById('start-game').addEventListener('click', () => {
-      window.location.href = "game.html";
+      // Simple fade-out before going to game page
+      document.body.classList.add('fade-out');
+      setTimeout(() => {
+        window.location.href = "game.html";
+      }, 800);
     });
   </script>
 </body>
 </html>
-
