@@ -17,7 +17,16 @@ body {
 button {
   padding: 10px 20px;
   font-size: 16px;
-  margin-top: 20px;
+  margin: 10px;
+  cursor: pointer;
+  border: 2px solid #8b4513;
+  background-color: #deb887;
+  border-radius: 8px;
+  transition: background-color 0.2s;
+}
+
+button:hover {
+  background-color: #d2b48c;
 }
 
 #start-game {
@@ -34,5 +43,6 @@ button {
 #start-game:hover {
   background-color: #d2b48c;
 }
+
 
 
