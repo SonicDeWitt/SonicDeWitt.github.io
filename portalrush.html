@@ -1,1 +1,513 @@
 
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Portal Rush — Brayden's 3D Game</title>
+<style>
+  html,body { height:100%; margin:0; overflow:hidden; font-family: Arial, Helvetica, sans-serif; background:#111; color:#fff;}
+  #overlay {
+    position: absolute; top: 10px; left: 10px; z-index:5;
+    background: rgba(0,0,0,0.4); padding:12px 14px; border-radius:8px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.6);
+    min-width:220px;
+  }
+  #hud { font-size:16px; line-height:1.4; }
+  #message {
+    position: absolute; right: 10px; top: 10px; z-index:5;
+    background: rgba(255,255,255,0.04); padding:10px 12px; border-radius:8px;
+    color:#ffedc6; font-weight:700;
+  }
+  button {padding:8px 12px; border-radius:6px; border:0; cursor:pointer; background:#ffcc66; color:#331a00; font-weight:700;}
+  #startScreen {
+    position: absolute; left:0; right:0; top:0; bottom:0; display:flex; align-items:center; justify-content:center; z-index:6;
+    background: linear-gradient(180deg, rgba(0,0,0,0.6), rgba(0,0,0,0.4));
+    flex-direction:column; gap:12px;
+  }
+  #startScreen h1 { font-size:36px; margin:0; color:#ffd89b; text-shadow:0 2px 0 #000; }
+  #startScreen p { margin:0; color:#fff9; }
+  canvas { display:block; }
+  #tips { font-size:12px; color:#fff7; margin-top:6px; }
+  .portal-glow { animation: pulse 1.4s infinite ease-in-out; }
+  @keyframes pulse { 0%{box-shadow:0 0 6px rgba(255,200,60,0.6)}50%{box-shadow:0 0 20px rgba(255,200,60,0.95)}100%{box-shadow:0 0 6px rgba(255,200,60,0.6)}}
+</style>
+</head>
+<body>
+  <div id="overlay">
+    <div id="hud">
+      <div>Level: <span id="level">1</span></div>
+      <div>Lives: <span id="lives">3</span></div>
+      <div>Cookies — wait, Score: <span id="score">0</span></div>
+    </div>
+    <div style="margin-top:8px;display:flex;gap:8px;">
+      <button id="muteBtn">Mute</button>
+      <button id="resetBtn">Reset</button>
+    </div>
+    <div id="tips">Click the screen to aim. WASD to move. Jump with Space.</div>
+  </div>
+  <div id="message">Find the glowing portal ✨</div>
+
+  <div id="startScreen">
+    <h1>Portal Rush</h1>
+    <p>Multiple levels • Portal teleports • Enemies chase you • A tad challenging</p>
+    <div style="display:flex;gap:10px">
+      <button id="startBtn">Start Game</button>
+      <button id="howBtn">How to Play</button>
+    </div>
+    <div id="howText" style="display:none; color:#fff9; margin-top:10px; max-width:520px; text-align:center">
+      Click to lock the pointer and look around. Walk into the glowing portal to proceed. Avoid enemies!
+    </div>
+  </div>
+
+<script type="module">
+import * as THREE from 'https://unpkg.com/three@0.152.2/build/three.module.js';
+import { PointerLockControls } from 'https://unpkg.com/three@0.152.2/examples/jsm/controls/PointerLockControls.js';
+
+let scene, camera, renderer, controls;
+let clock = new THREE.Clock();
+let player = { height: 1.8, speed: 6, canJump: false, velocity: new THREE.Vector3(), onGround: false };
+let objects = []; // collidable objects
+let portals = [];
+let enemies = [];
+let levelIndex = 0;
+let levels = [];
+let lives = 3;
+let score = 0;
+let hudLevel = document.getElementById('level');
+let hudLives = document.getElementById('lives');
+let hudScore = document.getElementById('score');
+let message = document.getElementById('message');
+let mixGain = 0.6;
+let isMuted = false;
+const gravity = 30;
+const jumpSpeed = 8;
+
+// Basic UI
+document.getElementById('resetBtn').onclick = resetGame;
+document.getElementById('muteBtn').onclick = toggleMute;
+document.getElementById('howBtn').onclick = ()=> {
+  const h = document.getElementById('howText');
+  h.style.display = h.style.display==='none' ? 'block' : 'none';
+};
+document.getElementById('startBtn').onclick = ()=> {
+  document.getElementById('startScreen').style.display='none';
+  init();
+  animate();
+};
+
+// Scene init
+function init(){
+  // Scene
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0b1220);
+
+  // Camera
+  camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, 0.1, 2000);
+  camera.position.set(0, player.height, 0);
+
+  // Lights
+  const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 0.7);
+  hemi.position.set(0, 200, 0);
+  scene.add(hemi);
+
+  const dir = new THREE.DirectionalLight(0xffffff, 0.6);
+  dir.position.set(-50,100,-50);
+  scene.add(dir);
+
+  // Renderer
+  renderer = new THREE.WebGLRenderer({ antialias:true });
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.shadowMap.enabled = true;
+  document.body.appendChild(renderer.domElement);
+
+  // Controls
+  controls = new PointerLockControls(camera, renderer.domElement);
+  // lock pointer on click
+  renderer.domElement.addEventListener('click', ()=> {
+    controls.lock();
+  }, {passive:true});
+
+  // Basic ground
+  const groundMat = new THREE.MeshStandardMaterial({color:0x334455});
+  const floor = new THREE.Mesh(new THREE.BoxGeometry(200, 1, 200), groundMat);
+  floor.position.y = -0.5;
+  floor.receiveShadow = true;
+  scene.add(floor);
+  objects.push(floor);
+
+  // Windy fog for atmosphere
+  scene.fog = new THREE.FogExp2(0x0b1220, 0.01);
+
+  // Create levels: arrays define obstacles, enemy counts, portal position
+  levels = makeLevels();
+
+  // Start first level
+  levelIndex = 0;
+  lives = 3;
+  score = 0;
+  loadLevel(levelIndex);
+
+  // Resize handler
+  window.addEventListener('resize', onWindowResize);
+  // Keyboard
+  document.addEventListener('keydown', onKeyDown);
+  document.addEventListener('keyup', onKeyUp);
+}
+
+// Build an array of level definitions (expandable)
+function makeLevels(){
+  // Each level: { obstacles:[{x,z,w,d,h,color}], enemies: n, portalPos: [x,y,z], startPos: [x,y,z], themeColor }
+  return [
+    {
+      obstacles: [
+        {x:0,z:-10,w:40,d:6,h:4,color:0x225566},
+        {x:-20,z:10,w:8,d:40,h:6,color:0x442211}
+      ],
+      enemies: 2,
+      portalPos: [30,1,30],
+      startPos: [0,1,0],
+      themeColor: 0x13324a
+    },
+    {
+      obstacles: [
+        {x:0,z:-20,w:50,d:8,h:6,color:0x2a4a2a},
+        {x:20,z:10,w:8,d:50,h:6,color:0x443322},
+        {x:-30,z:-5,w:6,d:20,h:4,color:0x5a2a2a}
+      ],
+      enemies: 4,
+      portalPos: [-40,1,40],
+      startPos: [0,1,10],
+      themeColor: 0x243a1f
+    },
+    {
+      obstacles: [
+        {x:0,z:0,w:10,d:60,h:6,color:0x333355},
+        {x:25,z:-15,w:30,d:6,h:6,color:0x452b1a},
+        {x:-20,z:20,w:12,d:12,h:10,color:0x2a2a44}
+      ],
+      enemies: 6,
+      portalPos: [0,1,-60],
+      startPos: [0,1,40],
+      themeColor: 0x2b1f42
+    },
+    // Add more levels as desired...
+  ];
+}
+
+// Clear a level (remove objects, portals, enemies)
+function clearLevel(){
+  // remove all objects except floor
+  for(let i=objects.length-1;i>=0;i--){
+    const o = objects[i];
+    if(o.userData && o.userData.isFloor) continue;
+    scene.remove(o);
+    objects.splice(i,1);
+  }
+  for(const p of portals){ scene.remove(p.mesh); }
+  portals.length = 0;
+  for(const e of enemies){ scene.remove(e.mesh); }
+  enemies.length = 0;
+}
+
+// Load level by index
+function loadLevel(i){
+  clearLevel();
+  const def = levels[i];
+  if(!def) {
+    // Win condition
+    showWin();
+    return;
+  }
+
+  // Set atmosphere color
+  renderer.setClearColor(def.themeColor, 1);
+  scene.fog.color.setHex(def.themeColor);
+  message.textContent = 'Find the portal and survive the enemies.';
+
+  // Create obstacles (boxes)
+  for(const ob of def.obstacles){
+    const mat = new THREE.MeshStandardMaterial({ color: ob.color });
+    const geo = new THREE.BoxGeometry(ob.w, ob.h, ob.d);
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(ob.x, ob.h/2 - 0.5, ob.z);
+    mesh.castShadow = mesh.receiveShadow = true;
+    mesh.userData.collidable = true;
+    scene.add(mesh);
+    objects.push(mesh);
+  }
+
+  // Add walls around the play area (invisible colliders)
+  const wallMat = new THREE.MeshStandardMaterial({color:0x111111, visible:false});
+  const wallThickness = 2;
+  const ext = 90;
+  const walls = [
+    new THREE.Mesh(new THREE.BoxGeometry(ext, 20, wallThickness), wallMat),
+    new THREE.Mesh(new THREE.BoxGeometry(ext, 20, wallThickness), wallMat),
+    new THREE.Mesh(new THREE.BoxGeometry(wallThickness, 20, ext), wallMat),
+    new THREE.Mesh(new THREE.BoxGeometry(wallThickness, 20, ext), wallMat)
+  ];
+  walls[0].position.set(0,9, -ext/2);
+  walls[1].position.set(0,9, ext/2);
+  walls[2].position.set(ext/2,9,0);
+  walls[3].position.set(-ext/2,9,0);
+  for(const w of walls){
+    w.userData.collidable = true;
+    scene.add(w);
+    objects.push(w);
+  }
+
+  // Place portal (visual + collider)
+  const portalGeometry = new THREE.TorusGeometry(2.2, 0.35, 16, 60);
+  const portalMaterial = new THREE.MeshStandardMaterial({ emissive:0xffd36b, emissiveIntensity:1.2, color:0x443300, metalness:0.3, roughness:0.1 });
+  const portal = new THREE.Mesh(portalGeometry, portalMaterial);
+  portal.position.set(def.portalPos[0], def.portalPos[1], def.portalPos[2]);
+  portal.rotation.x = Math.PI/2;
+  portal.userData.isPortal = true;
+  portal.castShadow = false;
+  scene.add(portal);
+  portals.push({ mesh: portal, pos: new THREE.Vector3(...def.portalPos), radius: 2.4 });
+
+  // Make a subtle glow sphere
+  const glow = new THREE.Mesh(new THREE.SphereGeometry(2.6, 16, 16), new THREE.MeshBasicMaterial({ color:0xffd36b, transparent:true, opacity:0.12 }));
+  glow.position.copy(portal.position);
+  scene.add(glow);
+
+  // Spawn enemies
+  const enemyCount = def.enemies;
+  for(let e=0;e<enemyCount;e++){
+    const sphere = new THREE.Mesh(new THREE.SphereGeometry(0.9, 12, 12), new THREE.MeshStandardMaterial({ color: 0xff6666, metalness:0.2, roughness:0.6 }));
+    // random spawn near center but not too close to portal or start
+    const angle = Math.random()*Math.PI*2;
+    const radius = 10 + Math.random()*20;
+    sphere.position.set(Math.cos(angle)*radius, 0.9, Math.sin(angle)*radius);
+    scene.add(sphere);
+    enemies.push({ mesh: sphere, speed: 1 + 0.4 * levelIndex + Math.random()*0.6, health:1 });
+  }
+
+  // Add scatter pickups (score)
+  for(let p=0;p<6;p++){
+    const box = new THREE.Mesh(new THREE.BoxGeometry(0.8,0.8,0.8), new THREE.MeshStandardMaterial({ color:0xffdf7e }));
+    const ax = (Math.random()-0.5)*40;
+    const az = (Math.random()-0.5)*40;
+    box.position.set(ax,0.4,az);
+    box.userData.pickup = true;
+    scene.add(box);
+    objects.push(box);
+  }
+
+  // Set player start
+  const sp = def.startPos;
+  controls.getObject().position.set(sp[0], sp[1], sp[2]);
+
+  // UI
+  levelIndex = i;
+  hudLevel.textContent = levelIndex + 1;
+  hudLives.textContent = lives;
+  hudScore.textContent = score;
+}
+
+// Game over or win
+function showWin(){
+  message.textContent = 'You beat the game! Nice work. Refresh to play again.';
+  // Fancy camera spin
+  const winText = document.createElement('div');
+  winText.style.position='absolute'; winText.style.left='0'; winText.style.right='0'; winText.style.top='40%';
+  winText.style.textAlign='center'; winText.style.fontSize='28px'; winText.style.color='#ffd';
+  winText.style.zIndex='10'; winText.textContent = '🎉 YOU WIN! 🎉';
+  document.body.appendChild(winText);
+  // stop animation loop by not queuing more frames (we can still keep animate running but do nothing)
+  cancelAnimationFrame(animId);
+}
+
+// Basic input
+const keyState = {};
+function onKeyDown(e){ keyState[e.code] = true; }
+function onKeyUp(e){ keyState[e.code] = false; }
+
+function onWindowResize(){
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+}
+
+// Simple collision detection: player is a point at camera position with small radius
+function detectCollisions(delta){
+  const pos = controls.getObject().position;
+  const radius = 0.4;
+  // floor check
+  player.onGround = pos.y <= player.height + 0.01;
+  if(pos.y < -5){
+    // fell off map -> lose life and respawn
+    loseLife();
+    return;
+  }
+  // check collidables
+  for(const o of objects){
+    if(!o.geometry) continue;
+    // AABB collision against player point (approx)
+    const box = new THREE.Box3().setFromObject(o);
+    // push player outside if colliding
+    if(box.expandByScalar(radius).containsPoint(pos)){
+      // simple push out by moving along most separated axis
+      const center = box.getCenter(new THREE.Vector3());
+      const diff = pos.clone().sub(center);
+      // determine axis to push by comparing normalized distances
+      if(Math.abs(diff.x) > Math.abs(diff.z)){
+        pos.x = center.x + Math.sign(diff.x)*(box.getSize(new THREE.Vector3()).x/2 + radius + 0.01);
+      } else {
+        pos.z = center.z + Math.sign(diff.z)*(box.getSize(new THREE.Vector3()).z/2 + radius + 0.01);
+      }
+      // if box is high, treat as floor
+      if(box.max.y - center.y > 1.5 && pos.y < box.max.y + 0.1){
+        pos.y = box.max.y + 0.01;
+        player.velocity.y = 0;
+        player.onGround = true;
+      }
+    }
+  }
+  // Portal detection
+  for(const p of portals){
+    const d = controls.getObject().position.distanceTo(p.pos);
+    if(d < p.radius){
+      // teleport to next level
+      score += 50 + levelIndex*10;
+      hudScore.textContent = score;
+      message.textContent = 'Portal reached! Teleporting...';
+      setTimeout(()=> {
+        loadLevel(levelIndex + 1);
+      }, 700);
+    }
+  }
+  // Pickups
+  for(let i=objects.length-1;i>=0;i--){
+    const o = objects[i];
+    if(o.userData.pickup){
+      if(o.position.distanceTo(controls.getObject().position) < 1.2){
+        score += 10;
+        hudScore.textContent = score;
+        scene.remove(o);
+        objects.splice(i,1);
+      }
+    }
+  }
+  // Enemy collisions -> lose life
+  for(const e of enemies){
+    if(e.mesh.position.distanceTo(controls.getObject().position) < 1.2){
+      loseLife();
+      break;
+    }
+  }
+}
+
+// Enemy AI: simple seek
+function updateEnemies(delta){
+  for(const e of enemies){
+    const dir = controls.getObject().position.clone().sub(e.mesh.position);
+    dir.y = 0;
+    const dist = dir.length();
+    if(dist > 1){
+      dir.normalize();
+      e.mesh.position.add(dir.multiplyScalar(e.speed * delta));
+    }
+    // bob effect
+    e.mesh.position.y = 0.9 + Math.sin(performance.now()/300 + e.speed) * 0.08;
+    // slight rotation
+    e.mesh.rotation.y += 0.01 * e.speed;
+  }
+}
+
+// Player loses life and respawns
+function loseLife(){
+  lives--;
+  hudLives.textContent = lives;
+  message.textContent = 'Ouch! You lost a life.';
+  if(lives <= 0){
+    // game over
+    message.textContent = 'Game Over — refreshing to restart...';
+    setTimeout(()=> location.reload(), 1400);
+  } else {
+    // respawn at current level start
+    const sp = levels[levelIndex].startPos;
+    controls.getObject().position.set(sp[0], sp[1], sp[2]);
+    player.velocity.set(0,0,0);
+  }
+}
+
+// Movement & physics
+function handleMovement(delta){
+  const speed = player.speed;
+  const forward = (keyState['KeyW'] ? 1:0) - (keyState['KeyS'] ? 1:0);
+  const side = (keyState['KeyD'] ? 1:0) - (keyState['KeyA'] ? 1:0);
+
+  // rotate movement by camera yaw
+  const euler = new THREE.Euler(0, camera.rotation.y, 0, 'YXZ');
+  const forwardVec = new THREE.Vector3(0,0,-1).applyEuler(euler);
+  const sideVec = new THREE.Vector3(-1,0,0).applyEuler(euler);
+
+  const move = new THREE.Vector3();
+  move.addScaledVector(forwardVec, forward);
+  move.addScaledVector(sideVec, side);
+  if(move.lengthSq()>0) move.normalize();
+
+  // Apply horizontal velocity
+  player.velocity.x = move.x * speed;
+  player.velocity.z = move.z * speed;
+
+  // Gravity
+  player.velocity.y -= gravity * delta;
+  if(player.onGround){
+    player.velocity.y = Math.max(0, player.velocity.y);
+  }
+
+  // Jump
+  if(keyState['Space'] && player.onGround){
+    player.velocity.y = jumpSpeed;
+    player.onGround = false;
+  }
+
+  // Apply to camera (position)
+  controls.getObject().position.addScaledVector(new THREE.Vector3(player.velocity.x, 0, player.velocity.z), delta);
+  controls.getObject().position.y += player.velocity.y * delta;
+}
+
+// Simple footstep sound toggle placeholder (no audio files included)
+function toggleMute(){
+  isMuted = !isMuted;
+  document.getElementById('muteBtn').textContent = isMuted ? 'Unmute' : 'Mute';
+}
+
+// Animation loop
+let animId;
+function animate(){
+  animId = requestAnimationFrame(animate);
+  const delta = Math.min(0.05, clock.getDelta());
+
+  handleMovement(delta);
+  detectCollisions(delta);
+  updateEnemies(delta);
+
+  // subtle portal spin
+  for(const p of portals){
+    p.mesh.rotation.z += 0.01 + 0.002 * levelIndex;
+  }
+
+  renderer.render(scene, camera);
+}
+
+// Reset game
+function resetGame(){
+  location.reload();
+}
+
+// Start instructions: create a dummy controls object to have pointer lock object before init()
+// This trick allows pointerLockControls.getObject() to exist in loadLevel when called
+(function precreateControls(){
+  // Create minimal scene for pointer lock to attach to even before the real scene is set up.
+  const cameraTemp = new THREE.PerspectiveCamera();
+  controls = new PointerLockControls(cameraTemp, document.body);
+})();
+
+</script>
+</body>
+</html>
